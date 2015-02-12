@@ -5,8 +5,17 @@ function! unite#sources#filelist#filename()
     \ "/", "##", "g")
 endfunction
 
+function! unite#sources#filelist#ensure_cache_dir()
+  " Ensure file list cache directory exists
+  let path = unite#sources#filelist#filesdir()
+  if !isdirectory(path)
+    call mkdir(path, "p")
+  endif
+endfunction
+
 function! unite#sources#filelist#filesdir()
-  return expand("~/.vim/filelists/")
+  " Use simplify() to ensure extra '/' are removed from the path
+  return expand(simplify(g:unite_filelist_cache_dir . "/"))
 endfunction
 
 function! unite#sources#filelist#build()
@@ -14,6 +23,8 @@ function! unite#sources#filelist#build()
   let filesdir = unite#sources#filelist#filesdir()
   let filepath = filesdir . filename
   let in_git = strlen(system("git rev-parse")) <= 0
+
+  call unite#sources#filelist#ensure_cache_dir()
 
   if in_git
     let cmd = "git ls-files" .
