@@ -27,11 +27,28 @@ function! unite#sources#filelist#build()
   call unite#sources#filelist#ensure_cache_dir()
 
   if in_git
+    " Use git ls-files to list all the tracked files then pipe the output
+    " to awk to add './' in front of each path.
     let cmd = "git ls-files" .
-      \ " | sed 's/^/\\.\\//'" .
+      \ " | awk '{print \"./\" $0}'" .
       \ " > " . filepath
-
     call system(cmd)
+
+    " Grab current working directory and remove the trailing ^@ (null)
+    " character
+    let wdpath = substitute(system("pwd"), '\%x00$', '', 'g')
+
+    " Index submodule files by iterating over each submodule, then while
+    " inside the submodule directory, call git-ls-files to list all tracked
+    " files by that submodule, then pipe those path to awk to prepend the
+    " submodule's relative path in front of each path.
+    for modpath in split(system("git submodule --quiet foreach pwd"), "\n")
+      let relmodpath = substitute(modpath, wdpath, '.', '')
+      let modcmd = "cd " . modpath . " && git ls-files" .
+        \ " | awk '{print \"" . relmodpath . "/\" $0}' " .
+        \ " >> " . filepath
+      call system(modcmd)
+    endfor
   else
     let cwd = getcwd()
     let cwd_l = strlen(cwd)
