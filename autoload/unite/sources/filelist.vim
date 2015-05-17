@@ -18,56 +18,58 @@ function! unite#sources#filelist#filesdir()
   return expand(simplify(g:unite_filelist_cache_dir . "/"))
 endfunction
 
+function! unite#sources#filelist#index_git(index, root, current)
+  " Use `git ls-file` to list all tracked files.
+  let cmd = "cd " . a:current . " && git ls-files" .
+    \ " | awk '{print \"" . substitute(a:current, a:root, '.', '') . "/\" $0}' " .
+    \ " >> " . a:index
+  call system(cmd)
+
+  " Recursive call this function to index all submodule directories.
+  for module in split(system("cd " . a:current . " && git submodule --quiet foreach pwd"), "\n")
+    call unite#sources#filelist#index_git(a:index, a:root, module)
+  endfor
+endfunction
+
+function! unite#sources#filelist#index_dir(index, path)
+  let path_l = strlen(a:path)
+  let ignores = &wildignore
+
+  " Convert wildignore pattern into regex pattern.
+  let patterns = map(split(ignores, ","), '
+    \ substitute(substitute(substitute(v:val,
+      \ "\\.", "\\\\.", "g"),
+      \ "\\/", "\\\\/", "g"),
+      \ "*", "\\.*", "g")
+  \')
+
+  " It's actually faster to tell `find` to simply list all the files then pass
+  " them to `grep` for a inverse match, then it is to tell `find` to perform
+  " regex match. Another reason for matching this way is regex match for `find`
+  " can only be perform on the entire path which is less flexible than using
+  " `grep` for partial match which result in more accurate results.
+  " The `cut` and `sed` part replaces the current path prefix of the result
+  " with just `./` in the index file.
+  let cmd = "find " . a:path . " -type f" .
+    \ " | grep --invert-match -E \"" . join(patterns, "|") . "\"" .
+    \ " | cut -c " . (path_l + 1) . "-" .
+    \ " | sed 's/^/\\./'" .
+    \ " > " . a:index
+
+  call system(cmd)
+endfunction
+
 function! unite#sources#filelist#build()
-  let filename = unite#sources#filelist#filename()
-  let filesdir = unite#sources#filelist#filesdir()
-  let filepath = filesdir . filename
+  let cwd = getcwd()
+  let index = unite#sources#filelist#filesdir() . unite#sources#filelist#filename()
   let in_git = strlen(system("git rev-parse")) <= 0
 
   call unite#sources#filelist#ensure_cache_dir()
 
   if in_git
-    " Use git ls-files to list all the tracked files then pipe the output
-    " to awk to add './' in front of each path.
-    let cmd = "git ls-files" .
-      \ " | awk '{print \"./\" $0}'" .
-      \ " > " . filepath
-    call system(cmd)
-
-    " Grab current working directory and remove the trailing ^@ (null)
-    " character
-    let wdpath = substitute(system("pwd"), '\%x00$', '', 'g')
-
-    " Index submodule files by iterating over each submodule, then while
-    " inside the submodule directory, call git-ls-files to list all tracked
-    " files by that submodule, then pipe those path to awk to prepend the
-    " submodule's relative path in front of each path.
-    for modpath in split(system("git submodule --quiet foreach pwd"), "\n")
-      let relmodpath = substitute(modpath, wdpath, '.', '')
-      let modcmd = "cd " . modpath . " && git ls-files" .
-        \ " | awk '{print \"" . relmodpath . "/\" $0}' " .
-        \ " >> " . filepath
-      call system(modcmd)
-    endfor
+    call unite#sources#filelist#index_git(index, cwd, cwd)
   else
-    let cwd = getcwd()
-    let cwd_l = strlen(cwd)
-    let ignores = &wildignore
-
-    let patterns = map(split(ignores, ","), '
-      \ substitute(substitute(substitute(v:val,
-        \ "\\.", "\\\\.", "g"),
-        \ "\\/", "\\\\/", "g"),
-        \ "*", "\\.*", "g")
-    \')
-
-    let cmd = "find " . cwd . " -type f" .
-      \ " | grep --invert-match -E \"" . join(patterns, "|") . "\"" .
-      \ " | cut -c " . (cwd_l + 1) . "-" .
-      \ " | sed 's/^/\\./'" .
-      \ " > " . filepath
-
-    call system(cmd)
+    call unite#sources#filelist#index_dir(index, cwd)
   endif
 endfunction
 
