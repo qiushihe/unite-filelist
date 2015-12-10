@@ -6,7 +6,7 @@ function! unite#sources#filelist#filename()
 endfunction
 
 function! unite#sources#filelist#ensure_cache_dir()
-  " Ensure file list cache directory exists
+  " Ensure the file list cache directory exists
   let path = unite#sources#filelist#filesdir()
   if !isdirectory(path)
     call mkdir(path, "p")
@@ -19,13 +19,15 @@ function! unite#sources#filelist#filesdir()
 endfunction
 
 function! unite#sources#filelist#index_git(index, root, current)
-  " Use `git ls-file` to list all tracked files.
+  " Use `git ls-file` to list all tracked files. An unfortunate consequence of
+  " this is that newly added unstaged files will not be indexed.
   let cmd = "cd " . a:current . " && git ls-files" .
     \ " | awk '{print \"" . substitute(a:current, a:root, '.', '') . "/\" $0}' " .
     \ " >> " . a:index
   call system(cmd)
 
-  " Recursive call this function to index all submodule directories.
+  " Recursively call this function to index all submodule directories
+  " (including any submodule's submodules).
   for module in split(system("cd " . a:current . " && git submodule --quiet foreach pwd"), "\n")
     call unite#sources#filelist#index_git(a:index, a:root, module)
   endfor
@@ -36,6 +38,8 @@ function! unite#sources#filelist#index_dir(index, path)
   let ignores = &wildignore
 
   " Convert wildignore pattern into regex pattern.
+  " * Escape . and / because in wildignore they are literal matches
+  " * Replace * with .* in regex
   let patterns = map(split(ignores, ","), '
     \ substitute(substitute(substitute(v:val,
       \ "\\.", "\\\\.", "g"),
@@ -45,9 +49,10 @@ function! unite#sources#filelist#index_dir(index, path)
 
   " It's actually faster to tell `find` to simply list all the files then pass
   " them to `grep` for a inverse match, then it is to tell `find` to perform
-  " regex match. Another reason for matching this way is regex match for `find`
-  " can only be perform on the entire path which is less flexible than using
-  " `grep` for partial match which result in more accurate results.
+  " regex match.
+  " Another reason for matching this way is regex match for `find` can only be
+  " perform on the entire path which is less flexible than using `grep` for
+  " partial match which result in more accurate results.
   " The `cut` and `sed` part replaces the current path prefix of the result
   " with just `./` in the index file.
   let cmd = "find " . a:path . " -type f" .
@@ -89,9 +94,10 @@ let s:unite_source = { 'name': 'filelist' }
 function! s:unite_source.gather_candidates(args, context)
   let filename = unite#sources#filelist#filename()
   let filesdir = unite#sources#filelist#filesdir()
+  let fileage = localtime() - getftime(filesdir . filename)
 
-  if findfile(filename, filesdir) != filesdir . filename
-    call unite#sources#filelist#build()
+  if fileage > g:unite_filelist_cache_timeout
+    call unite#sources#filelist#rebuild()
   endif
 
   let files = readfile(filesdir . filename)
